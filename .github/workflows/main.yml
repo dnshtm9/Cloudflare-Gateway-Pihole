@@ -10,6 +10,9 @@ jobs:
     permissions: write-all
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    concurrency: 
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}

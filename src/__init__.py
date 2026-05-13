@@ -27,10 +27,20 @@ env_vars = dot_env()
 # Load environment or .env variables
 CF_API_TOKEN = os.getenv("CF_API_TOKEN") or env_vars.get("CF_API_TOKEN")
 CF_IDENTIFIER = os.getenv("CF_IDENTIFIER") or env_vars.get("CF_IDENTIFIER")
-if not CF_API_TOKEN or not CF_IDENTIFIER or \
-   CF_API_TOKEN == "your CF_API_TOKEN value" or \
-   CF_IDENTIFIER == "your CF_IDENTIFIER value":
-    raise Exception("Missing Cloudflare credentials")
+
+# Credential Validation
+def validate_credential(value, name):
+    if not value:
+        return False
+    # Check for empty or common placeholder patterns
+    if value.lower() in ["", "your " + name.lower() + " value", "changeme", "xxx", "replace_me"]:
+        return False
+    return True
+
+if not validate_credential(CF_API_TOKEN, "CF_API_TOKEN") or \
+   not validate_credential(CF_IDENTIFIER, "CF_IDENTIFIER"):
+    logger.error("Missing or invalid Cloudflare credentials. Please check your .env file or environment variables.")
+    exit(1)
        
 # Compile regex patterns
 ids_pattern = re.compile(r"\$([a-f0-9-]+)")

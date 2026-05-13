@@ -1,9 +1,9 @@
 import os
-import http.client
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 from configparser import ConfigParser
 from src import info, convert, silent_error, error
 from src.requests import retry, retry_config, RateLimitException, HTTPException
+from src.http_client import request as http_request, HttpClientError
 
 # Define the DomainConverter class for processing URL lists
 class DomainConverter:
@@ -49,55 +49,33 @@ class DomainConverter:
 
     @retry(**retry_config)
     def download_file(self, url):
-        parsed_url = urlparse(url)
-        if parsed_url.scheme == "https":
-            conn = http.client.HTTPSConnection(parsed_url.netloc)
-        else:
-            conn = http.client.HTTPConnection(parsed_url.netloc)
-    
         headers = {
             'User-Agent': 'Mozilla/5.0'
         }
     
-        conn.request("GET", parsed_url.path, headers=headers)
-        response = conn.getresponse()
-    
-        # Handle redirection responses
-        while response.status in (301, 302, 303, 307, 308):
-            location = response.getheader('Location')
-            if not location:
-                break
-            # Construct new absolute URL if relative path is returned
-            if not urlparse(location).netloc:
-                location = urljoin(url, location)
-        
-            url = location
-            parsed_url = urlparse(url)
-        
-            # Create new connection based on the new URL scheme
-            if parsed_url.scheme == "https":
-                conn = http.client.HTTPSConnection(parsed_url.netloc)
-            else:
-                conn = http.client.HTTPConnection(parsed_url.netloc)
-        
-            conn.request("GET", parsed_url.path, headers=headers)
-            response = conn.getresponse()
-    
-        # Raise error for non-200 status codes
-        if response.status != 200:
-            error_message = f"Failed to download file from {url}, status code: {response.status}"
-            silent_error(error_message)
-            conn.close()
-            if response.status == 429:
-                raise RateLimitException(error_message)
-            else:
-                raise HTTPException(error_message)
+        try:
+            status, _, data = http_request(
+                "GET", url,
+                headers=headers,
+                timeout=30,         # Allow 30s for large lists
+                max_redirects=5     # Limit redirects to 5
+            )
+            
+            if status != 200:
+                error_message = f"Failed to download file from {url}, status code: {status}"
+                silent_error(error_message)
+                if status == 429:
+                    raise RateLimitException(error_message)
+                else:
+                    raise HTTPException(error_message)
 
-        # Read response data and close the connection
-        data = response.read().decode('utf-8')
-        conn.close()
-        info(f"Downloaded file from {url}. File size: {len(data)}")
-        return data
+            info(f"Downloaded file from {url}. File size: {len(data)}")
+            return data
+
+        except HttpClientError as e:
+            error_message = f"Network error downloading {url}: {e}"
+            silent_error(error_message)
+            raise HTTPException(error_message)
 
     def process_urls(self):
         block_content = ""

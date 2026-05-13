@@ -1,9 +1,10 @@
 import os
 import re
 import json
-import http.client
+import tempfile
 from src import ids_pattern, CACHE_FILE
 from src.cloudflare import get_lists, get_rules, get_list_items
+from src.http_client import request as http_request, HttpClientError
 
 
 class GithubAPI:
@@ -17,12 +18,17 @@ class GithubAPI:
 
     @staticmethod
     def request(method, url, body=None):
-        conn = http.client.HTTPSConnection(GithubAPI.BASE_URL)
-        conn.request(method, url, body, headers=GithubAPI.HEADERS)
-        response = conn.getresponse()
-        data = response.read()
-        conn.close()
-        return json.loads(data) if data else {}
+        try:
+            # Ensure url is relative path for the client
+            full_url = f"https://{GithubAPI.BASE_URL}{url}"
+            status, _, data = http_request(
+                method, full_url,
+                body=body.encode('utf-8') if body else None,
+                headers=GithubAPI.HEADERS
+            )
+            return json.loads(data) if data else {}
+        except HttpClientError:
+            return {}
 
     @staticmethod
     def delete(url):
@@ -55,8 +61,25 @@ def load_cache():
 
 
 def save_cache(cache):
-    with open(CACHE_FILE, 'w') as file:
-        json.dump(cache, file)
+    """
+    Atomically saves the cache to disk.
+    Writes to a temporary file first, then renames it.
+    """
+    try:
+        # Get the directory of the target file
+        dir_name = os.path.dirname(os.path.abspath(CACHE_FILE))
+        
+        # Create a temporary file in the same directory
+        with tempfile.NamedTemporaryFile('w', dir=dir_name, delete=False, suffix='.tmp') as tmp_file:
+            json.dump(cache, tmp_file)
+            temp_name = tmp_file.name
+            
+        # Atomic rename (os.replace is atomic on POSIX and Windows)
+        os.replace(temp_name, CACHE_FILE)
+    except Exception as e:
+        # Fallback to direct write if atomic fails (e.g. permissions)
+        with open(CACHE_FILE, 'w') as file:
+            json.dump(cache, file)
 
 
 def get_current_lists(cache, list_name):

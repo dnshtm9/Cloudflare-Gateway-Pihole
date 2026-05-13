@@ -1,3 +1,4 @@
+import os
 import argparse
 from src.domains import DomainConverter
 from src import utils, info, silent_error, error, PREFIX
@@ -6,17 +7,21 @@ from src.cloudflare import (
     update_rule, delete_list, delete_rule
 )
 
+# Default limit for free plan is 300,000 domains
+DEFAULT_DOMAIN_LIMIT = 300000
 
 class CloudflareManager:
     def __init__(self, prefix):
         self.list_name = f"[{prefix}]"
         self.rule_name = f"[{prefix}] Block Ads"
         self.cache = utils.load_cache()
+        # Load limit from environment or use default
+        self.domain_limit = int(os.getenv("CF_DOMAIN_LIMIT", DEFAULT_DOMAIN_LIMIT))
 
     def update_resources(self):
         domains_to_block = DomainConverter().process_urls()
-        if len(domains_to_block) > 300000:
-            error("The domains list exceeds Cloudflare Gateway's free limit of 300,000 domains.")
+        if len(domains_to_block) > self.domain_limit:
+            error(f"The domains list ({len(domains_to_block)}) exceeds the configured limit of {self.domain_limit} domains.")
         
         current_lists = utils.get_current_lists(self.cache, self.list_name)
         current_rules = utils.get_current_rules(self.cache, self.rule_name)

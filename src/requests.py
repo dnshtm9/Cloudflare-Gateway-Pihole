@@ -1,15 +1,10 @@
-import ssl
-import gzip
 import json
 import time
 import random
-import http.client
-import socket
-import zlib
-from io import BytesIO
 from functools import wraps
 from typing import Optional, Tuple
 from src import info, silent_error, error, CF_IDENTIFIER, CF_API_TOKEN
+from src.http_client import request as http_request, HttpClientError, HttpRedirectError
 
 # Custom Exceptions
 class HTTPException(Exception):
@@ -24,41 +19,29 @@ def cloudflare_gateway_request(
     body: Optional[str] = None,
     timeout: int = 10
 ) -> Tuple[int, dict]:
-    context = ssl.create_default_context()
-    conn = http.client.HTTPSConnection("api.cloudflare.com", context=context, timeout=timeout)
-
     headers = {
         "Authorization": f"Bearer {CF_API_TOKEN}",
         "Content-Type": "application/json",
         "Accept-Encoding": "gzip, deflate"
     }
 
-    url = f"/client/v4/accounts/{CF_IDENTIFIER}/gateway{endpoint}"
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_IDENTIFIER}/gateway{endpoint}"
     
     try:
-        # Make the HTTPS request to the specified Cloudflare endpoint
-        conn.request(method, url, body, headers)
-        response = conn.getresponse()
-        data = response.read()
-        status = response.status
-
-        # Handle different content encoding types
-        content_encoding = response.getheader('Content-Encoding')
-        if data is None or content_encoding in [None, 'identity']:
-            pass
-        elif content_encoding == 'gzip':
-            buf = BytesIO(data)
-            with gzip.GzipFile(fileobj=buf) as f:
-                data = f.read()
-        elif content_encoding == 'deflate':
-            data = zlib.decompress(data)
+        # Use the new secure client
+        status, _, data_str = http_request(
+            method, url,
+            body=body.encode('utf-8') if body else None,
+            headers=headers,
+            timeout=timeout
+        )
 
         # Handle HTTP error status codes
         if status >= 400:
             error_message = (
-                f"Request failed: {status} {response.reason}, "
-                f"Body: {data.decode('utf-8', errors='ignore')} "
-                f"for URL: https://api.cloudflare.com{url}"
+                f"Request failed: {status}, "
+                f"Body: {data_str} "
+                f"for URL: {url}"
             )
             if status == 429:
                 silent_error(error_message)
@@ -69,20 +52,18 @@ def cloudflare_gateway_request(
                 silent_error(error_message)
             raise HTTPException(error_message)
 
-        return status, json.loads(data.decode('utf-8'))
+        return status, json.loads(data_str)
 
-    except (http.client.HTTPException, ssl.SSLError, socket.timeout, OSError) as e:
-        # Log and raise a generic HTTP exception for network-related errors
+    except HttpClientError as e:
+        # Network or Client Error
         error_message = f"Network error occurred: {e}"
         silent_error(error_message)
         raise HTTPException(error_message)
     except json.JSONDecodeError:
-        # Log and raise an exception if JSON decoding fails
+        # JSON Error
         error_message = "Failed to decode JSON response"
         silent_error(error_message)
         raise HTTPException(error_message)
-    finally:
-        conn.close()
 
 # Retry conditions and strategies
 def stop_after_custom_attempts(attempt_number):

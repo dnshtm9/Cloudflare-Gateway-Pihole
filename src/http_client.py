@@ -1,7 +1,10 @@
 import ssl
 import socket
+import gzip
+import zlib
 import http.client
 import urllib.parse
+from io import BytesIO
 from typing import Tuple, Optional, Dict
 
 class HttpClientError(Exception):
@@ -15,6 +18,18 @@ class HttpRedirectError(HttpClientError):
 def create_ssl_context() -> ssl.SSLContext:
     """Creates a secure SSL context."""
     return ssl.create_default_context()
+
+def _decompress(data: bytes, content_encoding: Optional[str]) -> bytes:
+    """Decompress response data based on Content-Encoding header."""
+    if content_encoding in (None, 'identity'):
+        return data
+    if content_encoding == 'gzip':
+        buf = BytesIO(data)
+        with gzip.GzipFile(fileobj=buf) as f:
+            return f.read()
+    if content_encoding == 'deflate':
+        return zlib.decompress(data)
+    return data
 
 def request(
     method: str,
@@ -88,7 +103,10 @@ def request(
                 continue
 
             # Success or Non-Redirect Error
-            resp_body = response.read().decode("utf-8", errors="ignore")
+            raw_data = response.read()
+            content_encoding = response.getheader('Content-Encoding')
+            decompressed = _decompress(raw_data, content_encoding)
+            resp_body = decompressed.decode("utf-8", errors="ignore")
             resp_headers = dict(response.getheaders())
             return response.status, resp_headers, resp_body
 
